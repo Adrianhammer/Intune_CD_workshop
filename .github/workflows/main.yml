@@ -1,0 +1,64 @@
+name: Backup current configuration
+
+on:
+    workflow_dispatch:
+    schedule:
+      - cron: '0 20 * * *'
+
+env:
+    TENANT_NAME: ${{ secrets.TENANT_NAME }}
+    CLIENT_ID: ${{ secrets.CLIENT_ID }}
+    CLIENT_SECRET: ${{ secrets.CLIENT_SECRET }}
+    GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+permissions:
+    contents: write
+    pull-requests: write
+
+jobs: 
+    back_up_configuration: 
+        runs-on: ubuntu-latest
+        steps:
+            - name: Check out repository
+              uses: actions/checkout@v4
+              with:
+                ref: ${{ github.head_ref }}
+
+            - name: Remove existing prod-backup directory
+              shell: bash
+              run: |
+                rm -f -r -v "$GITHUB_WORKSPACE/prod-backup"
+
+            - name: Install IntuneCD
+              run: |
+                pip3 install IntuneCD
+
+            - name: Run IntuneCD backup
+              run: | 
+                mkdir -p "$GITHUB_WORKSPACE/prod-backup"
+                IntuneCD-startbackup \
+                    --mode=1 \
+                    --output=json \
+                    --path="$GITHUB_WORKSPACE/prod-backup"
+
+            - name: Declare variables
+              shell: bash
+              run: |
+                echo "sha_short=$(git rev-parse --short "$GITHUB_SHA")" >> "$GITHUB_ENV"
+                echo "date=$(date +%Y.%m.%d)" >> "$GITHUB_ENV"
+      
+
+            - name: Commit config updates
+              uses: stefanzweifel/git-auto-commit-action@v5
+              id: commit
+              continue-on-error: true
+              with:
+                commit_message: "Intune config backup ${{ env.date }}-${{ env.sha_short }}"
+                commit_user_name: ${{ secrets.COMMIT_NAME }}
+                commit_user_email: ${{ secrets.COMMIT_EMAIL }}
+                branch: "${{ env.date }}-${{ env.sha_short }}" 
+                create_branch: true
+
+            - name: create pull request
+              if: steps.commit.outputs.changes_detected == 'true'
+              run: gh pr create -B main -H ${{ env.date }}-${{ env.sha_short }} --title '${{ env.date }}-${{ env.sha_short }} - Backup of Intune configuration' --body 'Created by Github action'
